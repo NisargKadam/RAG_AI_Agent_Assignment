@@ -1,17 +1,17 @@
 """
-main.py - Entry Point for the RAG AI Agent
+main.py - RAG Agent (Query Mode)
 
-Usage:
-    1. Place PDF files in the 'data/' folder
-    2. Create a .env file with your OPENAI_API_KEY (see .env.example)
+This file runs the interactive Q&A loop using the RAG agent.
+Ingestion must be run FIRST as a separate step.
+
+HOW TO USE:
+    Step 1 (one-time): python ingestion.py    # Ingest PDFs into ChromaDB
+    Step 2 (anytime):  python main.py         # Ask questions
+
+To re-ingest (new PDFs or changed settings):
+    1. Delete the 'chroma_db/' folder
+    2. Run: python ingestion.py
     3. Run: python main.py
-
-Flow:
-    Phase 1 - Ingestion:
-        PDF files -> Extract text -> Split into chunks -> Store in ChromaDB
-
-    Phase 2 - RAG Agent (Interactive Q&A):
-        User question -> Retrieve relevant chunks -> LLM generates answer -> Response
 """
 
 import os
@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 # Load environment variables (OPENAI_API_KEY) from .env file
 load_dotenv()
 
-from ingestion import run_ingestion, CHROMA_DB_DIR
+from ingestion import CHROMA_DB_DIR
 from rag_agent import query_rag
 
 
@@ -30,22 +30,20 @@ def main():
     print("=" * 60)
     print()
 
-    # ------------------------------------------------------------------
-    # Phase 1: Ingestion (only if vector DB doesn't exist yet)
-    # ------------------------------------------------------------------
+    # Check that the vector DB exists (ingestion must be run first)
     if not os.path.exists(CHROMA_DB_DIR):
-        print("No existing vector database found. Running ingestion...\n")
-        result = run_ingestion()
-        if result is None:
-            print("\nIngestion failed. Please add PDFs to 'data/' and try again.")
-            return
+        print("No vector database found!")
         print()
-    else:
-        print(f"Found existing vector database at '{CHROMA_DB_DIR}/'.")
-        print("Skipping ingestion. Delete the folder to re-ingest.\n")
+        print("Run ingestion first:")
+        print("  1. Place your PDF files in the 'data/' folder")
+        print("  2. Run: python ingestion.py")
+        print("  3. Then run: python main.py")
+        return
+
+    print(f"Using vector database at '{CHROMA_DB_DIR}/'.\n")
 
     # ------------------------------------------------------------------
-    # Phase 2: RAG Agent - Interactive Q&A Loop
+    # RAG Agent - Interactive Q&A Loop
     # ------------------------------------------------------------------
     print("=" * 60)
     print("       RAG Agent Ready - Ask Questions!")
@@ -65,6 +63,8 @@ def main():
         # Run the question through the LangGraph RAG agent
         answer = query_rag(question)
         print(f"\nAssistant: {answer}\n")
+        print("-" * 60)
+        print()
 
 
 if __name__ == "__main__":
