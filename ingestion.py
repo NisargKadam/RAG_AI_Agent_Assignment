@@ -40,12 +40,12 @@ CHROMA_DB_DIR = "chroma_db"
 # CHUNK_SIZE: How many characters per chunk.
 #   - Smaller (300-500)  = more precise retrieval, but may lose context
 #   - Larger  (1000-2000) = more context per chunk, but less precise matching
-CHUNK_SIZE = 1000
+CHUNK_SIZE = 600
 
 # CHUNK_OVERLAP: How many characters overlap between consecutive chunks.
 #   - More overlap (200-500) = better continuity, chunks share more context
 #   - Less overlap (0-100)   = less redundancy, but may miss split sentences
-CHUNK_OVERLAP = 200
+CHUNK_OVERLAP = 100
 
 # --------------------------------------------------------------------------
 # EMBEDDING MODEL - Students: try swapping this!
