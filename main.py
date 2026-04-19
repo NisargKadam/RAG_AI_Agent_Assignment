@@ -1,70 +1,82 @@
 """
-main.py - RAG Agent (Query Mode)
+main.py - Interactive question-answering app for the RAG project.
 
-This file runs the interactive Q&A loop using the RAG agent.
-Ingestion must be run FIRST as a separate step.
-
-HOW TO USE:
-    Step 1 (one-time): python ingestion.py    # Ingest PDFs into ChromaDB
-    Step 2 (anytime):  python main.py         # Ask questions
-
-To re-ingest (new PDFs or changed settings):
-    1. Delete the 'chroma_db/' folder
-    2. Run: python ingestion.py
-    3. Run: python main.py
+Usage:
+1. Put PDF files inside `data/`
+2. Run `python ingestion.py`
+3. Run `python main.py`
 """
 
-import os
-from dotenv import load_dotenv
+from __future__ import annotations
 
-# Load environment variables (OPENAI_API_KEY) from .env file
-load_dotenv()
+import os
+
+from dotenv import load_dotenv
 
 from ingestion import CHROMA_DB_DIR
 from rag_agent import query_rag
 
 
-def main():
+load_dotenv()
+
+
+def print_banner() -> None:
+    """Display a simple welcome banner."""
     print("=" * 60)
-    print("       RAG AI Agent - LangGraph + ChromaDB")
+    print("RAG AI Agent - LangGraph + ChromaDB")
     print("=" * 60)
+
+
+def vector_database_exists() -> bool:
+    """Check whether ingestion has already created the Chroma database."""
+    return os.path.exists(CHROMA_DB_DIR)
+
+
+def print_setup_instructions() -> None:
+    """Tell the user how to prepare the project if ingestion has not been run."""
+    print("No vector database found.")
     print()
+    print("Run these steps first:")
+    print("1. Put PDF files inside the 'data/' folder")
+    print("2. Run: python ingestion.py")
+    print("3. Then run: python main.py")
 
-    # Check that the vector DB exists (ingestion must be run first)
-    if not os.path.exists(CHROMA_DB_DIR):
-        print("No vector database found!")
-        print()
-        print("Run ingestion first:")
-        print("  1. Place your PDF files in the 'data/' folder")
-        print("  2. Run: python ingestion.py")
-        print("  3. Then run: python main.py")
-        return
 
-    print(f"Using vector database at '{CHROMA_DB_DIR}/'.\n")
-
-    # ------------------------------------------------------------------
-    # RAG Agent - Interactive Q&A Loop
-    # ------------------------------------------------------------------
-    print("=" * 60)
-    print("       RAG Agent Ready - Ask Questions!")
-    print("=" * 60)
-    print("Type your question and press Enter. Type 'quit' to exit.\n")
+def run_chat_loop() -> None:
+    """Start the interactive question-answering loop."""
+    print()
+    print("Ask a question about your documents.")
+    print("Type 'quit' to exit.")
+    print()
 
     while True:
         question = input("You: ").strip()
 
         if not question:
             continue
-        if question.lower() in ("quit", "exit", "q"):
-            print("Goodbye!")
-            break
 
-        print()
-        # Run the question through the LangGraph RAG agent
+        if question.lower() in {"quit", "exit", "q"}:
+            print("Goodbye!")
+            return
+
         answer = query_rag(question)
-        print(f"\nAssistant: {answer}\n")
-        print("-" * 60)
         print()
+        print(f"Assistant: {answer}")
+        print()
+        print("-" * 60)
+
+
+def main() -> None:
+    """Run the CLI application."""
+    print_banner()
+    print()
+
+    if not vector_database_exists():
+        print_setup_instructions()
+        return
+
+    print(f"Using vector database at '{CHROMA_DB_DIR}/'.")
+    run_chat_loop()
 
 
 if __name__ == "__main__":

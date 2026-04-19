@@ -1,61 +1,228 @@
 # RAG AI Agent
 
-A simple Retrieval-Augmented Generation (RAG) agent built with **LangGraph** and **ChromaDB**.
+A simple, student-friendly Retrieval-Augmented Generation (RAG) project built with **LangGraph**, **ChromaDB**, and **local HuggingFace embeddings**.
+
+The goal of this project is not only to run a RAG agent, but also to help students understand how a RAG pipeline is structured so they can later modify it and build their own versions.
+
+## What This Project Teaches
+
+This project is split into two clear parts:
+
+1. `ingestion.py`
+   Turns PDF files into a searchable vector database.
+2. `rag_agent.py`
+   Uses a LangGraph workflow to retrieve useful chunks and generate an answer.
+3. `main.py`
+   Runs a simple interactive CLI so users can ask questions.
 
 ## Architecture
 
+```text
+PDF files
+  -> ingestion.py
+  -> chunks + embeddings
+  -> Chroma vector database
+
+User question
+  -> LangGraph RAG workflow
+  -> retrieve relevant chunks
+  -> generate grounded answer
+  -> final response with sources
 ```
-PDF Files ──► Ingestion Pipeline ──► ChromaDB Vector Store
-                                            │
-User Question ──► LangGraph RAG Agent ──────┤
-                       │                    │
-                   [Retrieve] ◄─────────────┘
-                       │
-                   [Generate] ──► Final Answer
+
+## Project Flow
+
+### 1. Ingestion Phase
+
+`ingestion.py` prepares the knowledge base.
+
+It does four things:
+
+1. Load PDF files from `data/`
+2. Split PDF pages into smaller chunks
+3. Create embeddings for those chunks using a local HuggingFace model
+4. Save the chunks and embeddings in `chroma_db/`
+
+Important idea for students:
+
+Ingestion is like preparing a library before the assistant can answer questions.
+
+### 2. RAG Agent Phase
+
+`rag_agent.py` defines a simple LangGraph workflow:
+
+```text
+START -> retrieve -> generate -> END
 ```
 
-### Phase 1: Ingestion (`ingestion.py`)
-1. **Data Extraction** - Load PDF files from `data/` using PyPDF
-2. **Chunking** - Split documents into overlapping chunks (1000 chars, 200 overlap)
-3. **Vector DB Creation** - Embed chunks with OpenAI embeddings and store in ChromaDB
+The graph has two main nodes:
 
-### Phase 2: RAG Agent (`rag_agent.py`)
-A LangGraph state graph with two nodes:
-1. **Retrieve** - Similarity search against ChromaDB to find relevant chunks
-2. **Generate** - LLM answers the question using only the retrieved context
+1. `retrieve`
+   Searches ChromaDB for the most relevant chunks
+2. `generate`
+   Sends the question and retrieved context to the LLM to produce the answer
 
-## Setup
+### 3. Application Phase
 
-```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+`main.py` is the interactive command-line app.
 
-# 2. Create .env file with your OpenAI API key
-cp .env.example .env
-# Edit .env and add your key
+It:
 
-# 3. Add PDF files to the data/ folder
-mkdir data
-# Copy your PDFs into data/
-
-# 4. Run the agent
-python main.py
-```
+1. Checks whether the vector database exists
+2. Starts a question-answer loop
+3. Sends each user question through the LangGraph RAG workflow
 
 ## Project Structure
 
-```
-├── main.py           # Entry point - runs ingestion then interactive Q&A
-├── ingestion.py      # PDF loading, chunking, ChromaDB vector store creation
-├── rag_agent.py      # LangGraph RAG agent (retrieve + generate nodes)
-├── requirements.txt  # Python dependencies
-├── .env.example      # Template for environment variables
-└── data/             # Place PDF files here (gitignored)
+```text
+RAG_AI_Agent/
+|-- main.py            # Interactive CLI app
+|-- ingestion.py       # PDF loading, chunking, embeddings, Chroma storage
+|-- rag_agent.py       # LangGraph retrieve + generate workflow
+|-- requirements.txt   # Python dependencies
+|-- .env.example       # Environment variable template
+|-- data/              # Put your PDF files here
+`-- chroma_db/         # Local vector database created after ingestion
 ```
 
-## How It Works
+## Setup
 
-1. Place your PDF documents in the `data/` folder
-2. Run `python main.py`
-3. The system ingests PDFs into ChromaDB (first run only)
-4. Ask questions interactively - the agent retrieves relevant chunks and generates answers
+### 1. Create and activate a virtual environment
+
+On Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+### 2. Install dependencies
+
+```powershell
+pip install -r requirements.txt
+```
+
+### 3. Create your `.env` file
+
+On Windows PowerShell:
+
+```powershell
+copy .env.example .env
+```
+
+Then open `.env` and add your `OPENAI_API_KEY`.
+
+Note:
+
+- The LLM answer generation uses OpenAI.
+- The embedding model is local HuggingFace, so embeddings do not need an OpenAI embedding API call.
+
+### 4. Add PDFs
+
+Put your PDF files into the `data/` folder.
+
+## How To Run
+
+### Step 1: Build the vector database
+
+```powershell
+python ingestion.py
+```
+
+This reads PDFs from `data/` and creates the local Chroma vector database in `chroma_db/`.
+
+### Step 2: Start the RAG app
+
+```powershell
+python main.py
+```
+
+Then ask questions such as:
+
+```text
+What is this document about?
+Summarize the main topics in the PDFs.
+What does the document say about X?
+```
+
+To exit:
+
+```text
+quit
+```
+
+## Rebuilding the Vector Database
+
+If you change the PDFs or change chunking settings in `ingestion.py`, rebuild the vector database.
+
+On Windows PowerShell:
+
+```powershell
+Remove-Item -Recurse -Force .\chroma_db
+python ingestion.py
+```
+
+Then run:
+
+```powershell
+python main.py
+```
+
+## Student-Friendly Customization Points
+
+Students can safely experiment with these values first:
+
+In `ingestion.py`:
+
+- `CHUNK_SIZE`
+- `CHUNK_OVERLAP`
+- `EMBEDDING_MODEL`
+
+In `rag_agent.py`:
+
+- `TOP_K`
+- `LLM_MODEL`
+- `TEMPERATURE`
+- `SYSTEM_PROMPT`
+
+These are good starting points for assignments because they let students see how retrieval and generation behavior changes without needing to redesign the whole project.
+
+## Suggested Learning Path
+
+1. Read `ingestion.py` to understand how documents become searchable.
+2. Read `rag_agent.py` to understand the LangGraph workflow.
+3. Run `python ingestion.py`
+4. Run `python main.py`
+5. Change one setting at a time and observe the result.
+
+## Current LangGraph Design
+
+This project already uses LangGraph in a simple and teachable way.
+
+The current graph is:
+
+```text
+START -> retrieve -> generate -> END
+```
+
+That makes it a strong base for future student extensions such as:
+
+- adding a router node
+- adding query rewriting
+- adding answer checking
+- adding conversation memory
+- switching retrieval strategies
+
+## Quick Start Commands
+
+If you just want the minimum commands on Windows PowerShell:
+
+```powershell
+cd "c:\Users\nisar\Documents\AI Builder 3\Projects\RAG_AI_Agent"
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+copy .env.example .env
+python ingestion.py
+python main.py
+```

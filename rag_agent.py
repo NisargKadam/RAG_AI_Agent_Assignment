@@ -1,269 +1,209 @@
 """
-rag_agent.py - LangGraph RAG Agent with Citations
+rag_agent.py - LangGraph-based RAG agent.
 
-This module implements a simple RAG (Retrieval-Augmented Generation) agent
-using LangGraph. The agent follows this flow:
+This module implements the answering side of the project.
 
-    [User Query] -> [Retrieve Chunks] -> [Generate Answer + Citations] -> [Final Response]
+High-level flow:
+    user question
+        -> retrieve relevant chunks from Chroma
+        -> generate an answer grounded in those chunks
+        -> return the final response with sources
 
-The graph has two nodes:
-    1. retrieve  - Queries the vector DB for relevant document chunks
-    2. generate  - Sends the chunks + question to the LLM for a grounded answer
-
-WHAT TO MODIFY (for students):
-    - SYSTEM_PROMPT  : Change the agent's personality and instructions
-    - TOP_K          : How many chunks to retrieve (more = broader context)
-    - LLM_MODEL      : Change the OpenAI model used for generation
-    - TEMPERATURE    : 0 = deterministic, 1 = creative
-    - retrieve()     : Try different retrieval methods (see comments inside)
+This file is intentionally organized around small, named functions so students
+can understand what each part of the agent is responsible for.
 """
 
+from __future__ import annotations
+
+import os
 from typing import TypedDict
-from langgraph.graph import StateGraph, START, END
-from langchain_openai import ChatOpenAI
-from langchain_huggingface import HuggingFaceEmbeddings
+
 from langchain_community.vectorstores import Chroma
+from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, START, StateGraph
 
 from ingestion import CHROMA_DB_DIR, EMBEDDING_MODEL
 
 
 # ==========================================================================
-# CONFIGURATION - MODIFY HERE
+# CONFIGURATION - students can experiment here
 # ==========================================================================
 
-# How many chunks to retrieve per query
-# - More chunks (5-8) = broader context, may include less relevant info
-# - Fewer chunks (2-3) = more focused, but may miss relevant info
 TOP_K = 4
-
-# --------------------------------------------------------------------------
-# LLM SETTINGS - Students: experiment with these!
-# --------------------------------------------------------------------------
-# Model to use for generating answers. Options:
-#   "gpt-4.1-mini"     - Fast, cheap, good quality (default)
-#   "gpt-4.1-nano"     - Fastest, cheapest, lower quality
-#   "gpt-4o-mini"      - Previous gen, fast and cheap
-#   "gpt-4o"           - High quality, slower, more expensive
 LLM_MODEL = "gpt-4.1-mini"
-
-# Temperature controls randomness:
-#   0.0 = deterministic (same answer every time) - best for factual Q&A
-#   0.7 = creative (varied answers) - better for brainstorming
-#   1.0 = very creative (may hallucinate more)
 TEMPERATURE = 0
 
-# --------------------------------------------------------------------------
-# SYSTEM PROMPT - Students: this is the most fun part to modify!
-# --------------------------------------------------------------------------
-# This prompt tells the LLM HOW to behave and HOW to use the retrieved context.
-# Try changing the tone, adding rules, or making it domain-specific.
-#
-# EXAMPLES TO TRY:
-#   - "You are a medical expert. Use clinical terminology..."
-#   - "You are a tutor. Explain concepts simply for a 10-year-old..."
-#   - "You are a legal assistant. Always cite specific sections..."
-#   - "Answer in bullet points only."
-#   - "If you're not sure, list what you DO know and what's missing."
-#
-SYSTEM_PROMPT = """You are a helpful assistant. Answer the user's question based ONLY \
-on the following context from retrieved documents.
+SYSTEM_PROMPT = """You are a helpful assistant answering questions from retrieved documents.
 
-RULES:
-1. Only use information from the provided context below.
-2. If the context does not contain enough information, say so honestly.
-3. At the end of your answer, add a "Sources:" section listing which \
-documents and pages you used.
+Follow these rules:
+1. Use only the retrieved context.
+2. If the context is not enough, say that clearly.
+3. End with a short "Sources:" section.
 
-Context:
+Retrieved context:
 {context}
 
-Source Documents:
-{sources}"""
+Retrieved sources:
+{sources}
+"""
 
 
 # ==========================================================================
-# STATE DEFINITION
+# LANGGRAPH STATE
 # ==========================================================================
-# LangGraph agents pass a shared "state" dict between nodes.
-# We define the shape of that state here using TypedDict.
 
 class RAGState(TypedDict):
-    question: str   # The user's question
-    context: str    # Retrieved document chunks (joined text)
-    sources: str    # Citation info (file names + page numbers)
-    answer: str     # The final generated answer
+    question: str
+    retrieved_documents: list[Document]
+    context: str
+    sources: str
+    answer: str
 
 
-# ==========================================================================
-# NODE 1: RETRIEVE - Query the vector DB for relevant chunks
-# ==========================================================================
+def build_embedding_model() -> HuggingFaceEmbeddings:
+    """Create the embedding model used to query the vector database."""
+    return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
-def retrieve(state: RAGState) -> dict:
-    """
-    RAG Step 1 - Query the vector DB.
 
-    Takes the user's question, performs a similarity search against
-    ChromaDB, and returns the top-K most relevant chunks as context,
-    along with source citations (file name + page number).
-    """
-    question = state["question"]
+def load_vector_store() -> Chroma:
+    """Open the existing Chroma database from disk."""
+    if not os.path.exists(CHROMA_DB_DIR):
+        raise FileNotFoundError(
+            f"Vector database '{CHROMA_DB_DIR}/' was not found. Run ingestion first."
+        )
 
-    # Load the persisted ChromaDB vector store (same local model as ingestion)
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-    vector_store = Chroma(
+    return Chroma(
         persist_directory=CHROMA_DB_DIR,
-        embedding_function=embeddings,
+        embedding_function=build_embedding_model(),
     )
 
-    # --------------------------------------------------------------------------
-    # MODIFY HERE: Try different retrieval methods
-    # --------------------------------------------------------------------------
 
-    # METHOD 1: Basic similarity search (DEFAULT)
-    # Returns the TOP_K chunks most similar to the question
-    results = vector_store.similarity_search(question, k=TOP_K)
+def format_context(documents: list[Document]) -> str:
+    """Join retrieved chunks into one context string for the prompt."""
+    if not documents:
+        return "No relevant context was retrieved."
 
-    # METHOD 2: Similarity search with relevance scores
-    # Returns chunks along with their similarity scores (0 to 1)
-    # Uncomment below and comment out Method 1 to try it:
-    #
-    # results_with_scores = vector_store.similarity_search_with_relevance_scores(
-    #     question, k=TOP_K
-    # )
-    # # Filter out low-relevance chunks (score < 0.3)
-    # results = [doc for doc, score in results_with_scores if score > 0.3]
-    # for doc, score in results_with_scores:
-    #     print(f"    Score: {score:.3f} | {doc.metadata.get('source', '?')}")
+    return "\n\n---\n\n".join(document.page_content for document in documents)
 
-    # METHOD 3: MMR (Maximum Marginal Relevance)
-    # Balances relevance with diversity - avoids returning similar chunks
-    # Uncomment below to try it:
-    #
-    # results = vector_store.max_marginal_relevance_search(
-    #     question, k=TOP_K, fetch_k=TOP_K * 3
-    # )
 
-    # --------------------------------------------------------------------------
+def format_sources(documents: list[Document]) -> str:
+    """Convert document metadata into a readable citation list."""
+    if not documents:
+        return "No sources retrieved."
 
-    # Build context string from retrieved chunks
-    context = "\n\n---\n\n".join([doc.page_content for doc in results])
+    formatted_sources = []
+    for index, document in enumerate(documents, start=1):
+        source_file = document.metadata.get("source", "Unknown source")
+        page_number = document.metadata.get("page", "?")
 
-    # Build citation info from chunk metadata
-    # Each chunk carries metadata from ingestion: {"source": "data/file.pdf", "page": 0}
-    sources_list = []
-    for i, doc in enumerate(results, 1):
-        source_file = doc.metadata.get("source", "Unknown")
-        page_num = doc.metadata.get("page", "?")
-        sources_list.append(f"  [{i}] {source_file} (Page {page_num + 1 if isinstance(page_num, int) else page_num})")
+        if isinstance(page_number, int):
+            page_label = page_number + 1
+        else:
+            page_label = page_number
 
-    sources = "\n".join(sources_list)
+        formatted_sources.append(f"[{index}] {source_file} (Page {page_label})")
 
-    print(f"  [Retrieve] Found {len(results)} relevant chunks for: '{question}'")
-    for s in sources_list:
-        print(f"  {s}")
-
-    return {"context": context, "sources": sources}
+    return "\n".join(formatted_sources)
 
 
 # ==========================================================================
-# NODE 2: GENERATE - Answer the question using LLM + retrieved context
+# LANGGRAPH NODES
 # ==========================================================================
 
-def generate(state: RAGState) -> dict:
+def retrieve_node(state: RAGState) -> dict:
     """
-    RAG Step 2 - Answer from RAG chunks with citations.
+    Retrieve the most relevant chunks for the user's question.
 
-    Takes the retrieved context, source citations, and the original question.
-    Sends them to the LLM with the system prompt to produce a grounded answer.
+    This is the retrieval step in Retrieval-Augmented Generation.
     """
     question = state["question"]
-    context = state["context"]
-    sources = state["sources"]
+    vector_store = load_vector_store()
+    retrieved_documents = vector_store.similarity_search(question, k=TOP_K)
 
-    # Build the prompt from our configurable SYSTEM_PROMPT
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT),
-        ("human", "{question}"),
-    ])
+    context = format_context(retrieved_documents)
+    sources = format_sources(retrieved_documents)
 
-    # Initialize the LLM with configured model and temperature
-    llm = ChatOpenAI(model=LLM_MODEL, temperature=TEMPERATURE)
-
-    # Build the chain: prompt -> LLM
-    chain = prompt | llm
-
-    # Invoke the chain with our context, sources, and question
-    response = chain.invoke({
+    print(f"[Retrieve] Found {len(retrieved_documents)} chunk(s) for: {question}")
+    return {
+        "retrieved_documents": retrieved_documents,
         "context": context,
         "sources": sources,
-        "question": question,
-    })
+    }
 
-    print(f"  [Generate] Answer produced.")
+
+def generate_node(state: RAGState) -> dict:
+    """
+    Generate the final answer using the retrieved context.
+
+    This is the generation step in Retrieval-Augmented Generation.
+    """
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", SYSTEM_PROMPT),
+            ("human", "{question}"),
+        ]
+    )
+
+    llm = ChatOpenAI(model=LLM_MODEL, temperature=TEMPERATURE)
+    chain = prompt | llm
+
+    response = chain.invoke(
+        {
+            "question": state["question"],
+            "context": state["context"],
+            "sources": state["sources"],
+        }
+    )
+
+    print("[Generate] Answer created.")
     return {"answer": response.content}
 
 
 # ==========================================================================
-# BUILD THE LANGGRAPH AGENT
+# GRAPH CONSTRUCTION
 # ==========================================================================
 
-def build_rag_agent() -> StateGraph:
+def build_rag_graph():
     """
-    Constructs the LangGraph RAG agent with two nodes:
+    Build and compile the LangGraph workflow.
 
+    Graph structure:
         START -> retrieve -> generate -> END
-
-    This is intentionally kept simple to clearly show the RAG flow:
-    1. User asks a question
-    2. retrieve node fetches relevant chunks from ChromaDB
-    3. generate node uses those chunks + citations to produce a grounded answer
-    4. The answer (with source references) is returned
     """
-    # Create the state graph with our RAGState schema
-    graph = StateGraph(RAGState)
+    graph_builder = StateGraph(RAGState)
 
-    # Add the two nodes
-    graph.add_node("retrieve", retrieve)   # Node 1: Query vector DB
-    graph.add_node("generate", generate)   # Node 2: Generate answer
+    graph_builder.add_node("retrieve", retrieve_node)
+    graph_builder.add_node("generate", generate_node)
 
-    # Define the edges (flow): START -> retrieve -> generate -> END
-    graph.add_edge(START, "retrieve")
-    graph.add_edge("retrieve", "generate")
-    graph.add_edge("generate", END)
+    graph_builder.add_edge(START, "retrieve")
+    graph_builder.add_edge("retrieve", "generate")
+    graph_builder.add_edge("generate", END)
 
-    # Compile the graph into a runnable agent
-    agent = graph.compile()
-    return agent
+    return graph_builder.compile()
 
 
 def query_rag(question: str) -> str:
-    """
-    Run a single question through the RAG agent.
-
-    Args:
-        question: The user's question string.
-
-    Returns:
-        The agent's answer (with citations) as a string.
-    """
-    agent = build_rag_agent()
-
-    # Run the agent with the initial state
-    result = agent.invoke({
-        "question": question,
-        "context": "",     # Will be filled by the retrieve node
-        "sources": "",     # Will be filled by the retrieve node
-        "answer": "",      # Will be filled by the generate node
-    })
-
+    """Run one question through the LangGraph RAG workflow."""
+    graph = build_rag_graph()
+    result = graph.invoke(
+        {
+            "question": question,
+            "retrieved_documents": [],
+            "context": "",
+            "sources": "",
+            "answer": "",
+        }
+    )
     return result["answer"]
 
 
 if __name__ == "__main__":
     from dotenv import load_dotenv
-    load_dotenv()
 
-    # Quick test
-    answer = query_rag("What is this document about?")
-    print(f"\nAnswer: {answer}")
+    load_dotenv()
+    demo_answer = query_rag("What is this document about?")
+    print()
+    print(demo_answer)
